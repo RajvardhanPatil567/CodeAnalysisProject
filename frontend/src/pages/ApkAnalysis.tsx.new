@@ -1,0 +1,409 @@
+import React, { useState, useCallback } from 'react';
+import { useDropzone } from 'react-dropzone';
+import { analyzeApk } from '../services/shenmeapp';
+import {
+  Box,
+  Button,
+  Card,
+  CardContent,
+  CardActions,
+  CircularProgress,
+  Container,
+  Typography,
+  Alert,
+  Snackbar,
+  List,
+  ListItem,
+  ListItemText,
+  Paper,
+  LinearProgress,
+} from '@mui/material';
+import { CloudUpload as CloudUploadIcon, Download as DownloadIcon } from '@mui/icons-material';
+
+// Define types for analysis results
+interface SecurityIssue {
+  title: string;
+  severity: 'high' | 'medium' | 'low' | 'info';
+  description: string;
+  recommendation: string;
+  file: string;
+  line: number;
+}
+
+interface AnalysisResult {
+  file_name: string;
+  file_hash: string;
+  package_name: string;
+  version_name: string;
+  version_code: string;
+  sdk_version: {
+    min_sdk: string;
+    target_sdk: string;
+    max_sdk: string;
+  };
+  permissions: string[];
+  activities: string[];
+  services: string[];
+  receivers: string[];
+  providers: string[];
+  security_score: number;
+  security_issues: SecurityIssue[];
+  code_analysis: Record<string, any>;
+  file_analysis: Record<string, any>;
+  manifest_analysis: Record<string, any>;
+  created_at: string;
+}
+
+interface AnalysisState {
+  file: File | null;
+  isAnalyzing: boolean;
+  analysisResult: AnalysisResult | null;
+  error: string | null;
+  scanLogs: string[];
+  scanProgress: number;
+  activeTab: number;
+}
+
+const ApkAnalysis: React.FC = () => {
+  const [state, setState] = useState<AnalysisState>({
+    file: null,
+    isAnalyzing: false,
+    analysisResult: null,
+    error: null,
+    scanLogs: [],
+    scanProgress: 0,
+    activeTab: 0
+  });
+  
+  const { file, isAnalyzing, analysisResult, error, scanLogs, scanProgress } = state;
+
+  const onDrop = useCallback((acceptedFiles: File[]) => {
+    if (acceptedFiles.length > 0) {
+      setState(prev => ({
+        ...prev,
+        file: acceptedFiles[0],
+        error: null
+      }));
+    }
+  }, []);
+
+  const { getRootProps, getInputProps, isDragActive } = useDropzone({
+    onDrop,
+    accept: {
+      'application/vnd.android.package-archive': ['.apk']
+    },
+    multiple: false
+  });
+  
+  const handleCloseError = () => {
+    setState(prev => ({
+      ...prev,
+      error: null
+    }));
+  };
+
+  const startAnalysis = async () => {
+    if (!file) {
+      setState(prev => ({
+        ...prev,
+        error: 'Please select an APK file first'
+      }));
+      return;
+    }
+
+    setState(prev => ({
+      ...prev,
+      isAnalyzing: true,
+      error: null,
+      analysisResult: null,
+      scanLogs: ['Starting analysis with ShenmeApp...']
+    }));
+
+    try {
+      setState(prev => ({
+        ...prev,
+        scanProgress: 10,
+        scanLogs: [...prev.scanLogs, 'Uploading APK to ShenmeApp...']
+      }));
+
+      const analysisResponse = await analyzeApk(file);
+      
+      if (!analysisResponse.success) {
+        throw new Error(analysisResponse.error || 'Failed to analyze APK');
+      }
+
+      setState(prev => ({
+        ...prev,
+        scanProgress: 50,
+        scanLogs: [...prev.scanLogs, 'Analysis in progress...']
+      }));
+
+      const result = analysisResponse.data;
+      
+      const mappedResult: AnalysisResult = {
+        file_name: file.name,
+        file_hash: result.hash || 'N/A',
+        package_name: result.package_name || 'N/A',
+        version_name: result.version_name || 'N/A',
+        version_code: result.version_code?.toString() || 'N/A',
+        sdk_version: {
+          min_sdk: result.min_sdk_version || 'N/A',
+          target_sdk: result.target_sdk_version || 'N/A',
+          max_sdk: result.max_sdk_version || 'N/A'
+        },
+        permissions: result.permissions || [],
+        activities: result.activities || [],
+        services: result.services || [],
+        receivers: result.receivers || [],
+        providers: result.providers || [],
+        security_score: result.security_score || 0,
+        security_issues: result.security_issues?.map((issue: any) => ({
+          title: issue.title,
+          severity: issue.severity || 'medium',
+          description: issue.description,
+          recommendation: issue.recommendation || 'Review the code and apply security best practices.',
+          file: issue.file || 'N/A',
+          line: issue.line || 0
+        })) || [],
+        code_analysis: result.code_analysis || {},
+        file_analysis: result.file_analysis || {},
+        manifest_analysis: result.manifest_analysis || {},
+        created_at: new Date().toISOString()
+      };
+
+      setState(prev => ({
+        ...prev,
+        analysisResult: mappedResult,
+        scanProgress: 100,
+        scanLogs: [...prev.scanLogs, 'Analysis completed successfully!']
+      }));
+      
+    } catch (err: any) {
+      const errorMessage = err.message || 'Failed to analyze APK';
+      setState(prev => ({
+        ...prev,
+        error: errorMessage,
+        scanLogs: [...prev.scanLogs, `Error: ${errorMessage}`]
+      }));
+    } finally {
+      setState(prev => ({
+        ...prev,
+        isAnalyzing: false
+      }));
+    }
+  };
+  
+  const downloadPdfReport = async () => {
+    if (!analysisResult) return;
+
+    try {
+      const { jsPDF } = await import('jspdf');
+      const doc = new jsPDF();
+      
+      // Add title
+      doc.setFontSize(20);
+      doc.text('APK Analysis Report', 20, 20);
+      
+      // Add basic info
+      doc.setFontSize(12);
+      doc.text(`File: ${analysisResult.file_name}`, 20, 40);
+      doc.text(`Package: ${analysisResult.package_name}`, 20, 50);
+      doc.text(`Version: ${analysisResult.version_name} (${analysisResult.version_code})`, 20, 60);
+      
+      // Add security score
+      doc.setFontSize(14);
+      doc.text(`Security Score: ${analysisResult.security_score}/100`, 20, 80);
+      
+      // Add security issues
+      doc.setFontSize(12);
+      let y = 100;
+      doc.text('Security Issues:', 20, y);
+      y += 10;
+      
+      analysisResult.security_issues.forEach((issue, index) => {
+        if (y > 250) {
+          doc.addPage();
+          y = 20;
+        }
+        doc.setFont(undefined, 'bold');
+        doc.text(`${index + 1}. ${issue.title} (${issue.severity})`, 25, y);
+        doc.setFont(undefined, 'normal');
+        y += 7;
+        doc.text(`   ${issue.description}`, 30, y, { maxWidth: 160 });
+        y += 20;
+      });
+      
+      // Save the PDF
+      doc.save(`apk_report_${analysisResult.file_hash}.pdf`);
+      
+      setState(prev => ({
+        ...prev,
+        scanLogs: [...prev.scanLogs, 'PDF report generated successfully']
+      }));
+      
+    } catch (err: any) {
+      setState(prev => ({
+        ...prev,
+        error: 'Failed to generate PDF report',
+        scanLogs: [...prev.scanLogs, `Error generating PDF: ${err.message}`]
+      }));
+    }
+  };
+
+  const renderAnalysisResults = () => {
+    if (!analysisResult) return null;
+    
+    return (
+      <Box mt={4}>
+        <Card>
+          <CardContent>
+            <Typography variant="h6" gutterBottom>
+              Analysis Results
+            </Typography>
+            <Typography variant="body1">
+              File: {analysisResult.file_name}
+            </Typography>
+            <Typography variant="body1">
+              Package: {analysisResult.package_name}
+            </Typography>
+            <Typography variant="body1">
+              Version: {analysisResult.version_name} ({analysisResult.version_code})
+            </Typography>
+            <Typography variant="body1">
+              Security Score: {analysisResult.security_score}/100
+            </Typography>
+            
+            {analysisResult.security_issues?.length > 0 && (
+              <Box mt={2}>
+                <Typography variant="subtitle1" gutterBottom>
+                  Security Issues ({analysisResult.security_issues.length} found):
+                </Typography>
+                <List>
+                  {analysisResult.security_issues.map((issue, index) => (
+                    <ListItem key={index}>
+                      <ListItemText
+                        primary={issue.title}
+                        secondary={
+                          <>
+                            <Typography component="span" variant="body2" color="text.primary">
+                              {issue.severity.toUpperCase()}
+                            </Typography>
+                            {` — ${issue.description}`}
+                            <br />
+                            <Typography component="span" variant="caption" color="text.secondary">
+                              {issue.recommendation}
+                            </Typography>
+                          </>
+                        }
+                      />
+                    </ListItem>
+                  ))}
+                </List>
+              </Box>
+            )}
+          </CardContent>
+          <CardActions>
+            <Button
+              variant="contained"
+              color="primary"
+              startIcon={<DownloadIcon />}
+              onClick={downloadPdfReport}
+            >
+              Download PDF Report
+            </Button>
+          </CardActions>
+        </Card>
+      </Box>
+    );
+  };
+
+  return (
+    <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
+      <Typography variant="h4" gutterBottom>
+        APK Analysis
+      </Typography>
+      
+      <Paper sx={{ p: 3, mb: 3 }}>
+        <Box {...getRootProps()} sx={{
+          border: '2px dashed',
+          borderColor: 'primary.main',
+          borderRadius: 1,
+          p: 4,
+          textAlign: 'center',
+          cursor: 'pointer',
+          backgroundColor: isDragActive ? 'action.hover' : 'background.paper',
+          '&:hover': {
+            backgroundColor: 'action.hover',
+          },
+          mb: 2,
+        }}>
+          <input {...getInputProps()} />
+          <CloudUploadIcon fontSize="large" color={isDragActive ? 'primary' : 'action'} />
+          <Typography variant="body1" color="textSecondary">
+            {isDragActive
+              ? 'Drop the APK file here'
+              : 'Drag and drop an APK file here, or click to select'}
+          </Typography>
+          {file && (
+            <Typography variant="body2" sx={{ mt: 1 }}>
+              Selected: {file.name} ({(file.size / 1024 / 1024).toFixed(2)} MB)
+            </Typography>
+          )}
+        </Box>
+        
+        <Box display="flex" justifyContent="flex-end">
+          <Button
+            variant="contained"
+            color="primary"
+            onClick={startAnalysis}
+            disabled={!file || isAnalyzing}
+            startIcon={isAnalyzing ? <CircularProgress size={20} /> : null}
+          >
+            {isAnalyzing ? 'Analyzing...' : 'Analyze APK'}
+          </Button>
+        </Box>
+        
+        {isAnalyzing && (
+          <Box mt={2}>
+            <LinearProgress variant="determinate" value={scanProgress} />
+            <Typography variant="caption" display="block" align="right">
+              {scanProgress}%
+            </Typography>
+          </Box>
+        )}
+      </Paper>
+      
+      {error && (
+        <Alert
+          severity="error"
+          onClose={handleCloseError}
+          sx={{ mb: 3 }}
+        >
+          {error}
+        </Alert>
+      )}
+      
+      {scanLogs.length > 0 && (
+        <Paper sx={{ p: 2, mb: 3, maxHeight: 200, overflow: 'auto' }}>
+          <Typography variant="subtitle2" gutterBottom>Logs:</Typography>
+          <Box component="pre" sx={{ m: 0, fontFamily: 'monospace', fontSize: '0.8rem' }}>
+            {scanLogs.map((log, index) => (
+              <div key={index}>{`[${new Date().toLocaleTimeString()}] ${log}`}</div>
+            ))}
+          </Box>
+        </Paper>
+      )}
+      
+      {renderAnalysisResults()}
+      
+      <Snackbar
+        open={!!error}
+        autoHideDuration={6000}
+        onClose={handleCloseError}
+        message={error}
+      />
+    </Container>
+  );
+};
+
+export default ApkAnalysis;

@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "PDF Keyword Highlighter",
+  "version": "1.0",
+  "description": "Highlight keywords in PDF documents viewed in Microsoft Edge",
+  "permissions": ["activeTab", "scripting", "storage"],
+  "host_permissions": ["<all_urls>"],
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["contentScript.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["contentScript.js"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}
